@@ -26,7 +26,7 @@ use gpui::{
 };
 use project::Project;
 use rpc::proto;
-use settings::Settings as _;
+use settings::Settings;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -35,7 +35,7 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{notifications::NotifyResultExt, Workspace, WorkspaceSettings};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 use zeta::ZedPredictBanner;
 
@@ -125,6 +125,7 @@ pub struct TitleBar {
     workspace: WeakEntity<Workspace>,
     should_move: bool,
     application_menu: Option<Entity<ApplicationMenu>>,
+    use_native_tabs: bool,
     _subscriptions: Vec<Subscription>,
     zed_predict_banner: Entity<ZedPredictBanner>,
     git_banner: Entity<GitBanner>,
@@ -154,7 +155,13 @@ impl Render for TitleBar {
                 if window.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
-                    this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                    // When native tabs are enabled, the native titlebar is also displayed on top of the window.
+                    // Therefore, we don't need to add the traffic light padding that is normally needed for the custom titlebar.
+                    if self.use_native_tabs {
+                        this.pl_2()
+                    } else {
+                        this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                    }
                 } else {
                     this.pl_2()
                 }
@@ -304,6 +311,8 @@ impl TitleBar {
             }
         };
 
+        let use_native_tabs = WorkspaceSettings::get_global(cx).use_native_tabs;
+
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -328,6 +337,7 @@ impl TitleBar {
             project,
             user_store,
             client,
+            use_native_tabs,
             _subscriptions: subscriptions,
             zed_predict_banner,
             git_banner,

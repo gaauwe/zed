@@ -24,6 +24,7 @@ pub struct WorkspaceSettings {
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub on_last_window_closed: OnLastWindowClosed,
+    pub use_native_tabs: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -165,6 +166,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
     pub on_last_window_closed: Option<OnLastWindowClosed>,
+    /// Whether to use native tabs on macOS.
+    ///
+    /// Default: false
+    pub use_native_tabs: Option<bool>,
 }
 
 #[derive(Deserialize)]

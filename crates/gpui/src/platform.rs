@@ -1026,6 +1026,7 @@ impl Default for WindowOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
+                use_native_tabs: Default::default(),
             }),
             focus: true,
             show: true,
@@ -1052,6 +1053,9 @@ pub struct TitlebarOptions {
 
     /// The position of the macOS traffic light buttons
     pub traffic_light_position: Option<Point<Pixels>>,
+
+    /// Whether native tabs should be enabled for macOS.
+    pub use_native_tabs: Option<bool>,
 }
 
 /// The kind of window to create
