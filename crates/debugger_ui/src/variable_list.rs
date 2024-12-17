@@ -5,7 +5,6 @@ use editor::{
     actions::{self, SelectAll},
     Editor, EditorEvent,
 };
-use futures::future::try_join_all;
 use gpui::{
     anchored, deferred, list, AnyElement, ClipboardItem, DismissEvent, FocusHandle, FocusableView,
     ListState, Model, MouseDownEvent, Point, Subscription, Task, View,
@@ -452,13 +451,7 @@ impl VariableList {
             }
 
             let tasks_results = futures::future::join_all(tasks).await;
-            let result = tasks_results
-                .into_iter()
-                .filter_map(|r| match r {
-                    Ok(res) => Some(res),
-                    Err(_) => None,
-                })
-                .collect::<Vec<_>>();
+            let result = tasks_results.into_iter().filter_map(|result| result.ok());
 
             this.update(&mut cx, |this, cx| {
                 let mut new_variables = BTreeMap::new();
