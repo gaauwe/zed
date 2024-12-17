@@ -451,7 +451,14 @@ impl VariableList {
                 );
             }
 
-            let result = try_join_all(tasks).await?;
+            let tasks_results = futures::future::join_all(tasks).await;
+            let result = tasks_results
+                .into_iter()
+                .filter_map(|r| match r {
+                    Ok(res) => Some(res),
+                    Err(_) => None,
+                })
+                .collect::<Vec<_>>();
 
             this.update(&mut cx, |this, cx| {
                 let mut new_variables = BTreeMap::new();
