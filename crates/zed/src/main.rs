@@ -18,7 +18,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{Action, App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
@@ -302,6 +302,23 @@ fn main() {
                 }
             })
             .detach();
+        }
+    });
+    app.new_window_for_tab(move |cx| {
+        for workspace in workspace::local_workspace_windows(cx) {
+            workspace
+                .update(cx, |_view, window, cx| {
+                    if window.is_window_active() {
+                        window.dispatch_action(
+                            zed_actions::OpenRecent {
+                                create_new_window: true,
+                            }
+                            .boxed_clone(),
+                            cx,
+                        );
+                    }
+                })
+                .log_err();
         }
     });
 
