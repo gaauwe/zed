@@ -19545,7 +19545,20 @@ impl Editor {
         }
     }
 
-    fn handle_focus_in(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn handle_focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Automatically close the terminal panel when the editor gains focus.
+        if let Some(workspace) = self.workspace() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.bottom_dock().update(cx, |dock, cx| {
+                    let panel = dock.active_panel().unwrap();
+                    let panel_name = panel.persistent_name();
+                    if panel_name == "TerminalPanel" {
+                        dock.set_open(false, window, cx);
+                    }
+                });
+            });
+        }
+
         cx.emit(EditorEvent::FocusedIn)
     }
 
