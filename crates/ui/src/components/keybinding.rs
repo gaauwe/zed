@@ -55,7 +55,7 @@ impl KeyBinding {
     }
 
     fn is_vim_mode(cx: &App) -> bool {
-        cx.try_global::<VimStyle>().is_some_and(|g| g.0)
+        false
     }
 
     pub fn new(key_binding: gpui::KeyBinding, cx: &App) -> Self {

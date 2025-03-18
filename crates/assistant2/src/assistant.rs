@@ -99,7 +99,7 @@ fn feature_gate_assistant2_actions(cx: &mut App) {
     });
 
     cx.observe_flag::<Assistant2FeatureFlag, _>(move |is_enabled, cx| {
-        if is_enabled {
+        if true {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.show_namespace(NAMESPACE);
             });

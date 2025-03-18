@@ -125,23 +125,37 @@ impl Model {
 
 #[derive(Serialize, Deserialize)]
 pub struct Request {
-    pub intent: bool,
     pub n: usize,
     pub stream: bool,
     pub temperature: f32,
+    pub max_tokens: usize,
+    pub top_p: usize,
     pub model: Model,
     pub messages: Vec<ChatMessage>,
+    pub thinking: Option<ThinkingConfig>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ThinkingConfig {
+    #[serde(rename = "type")]
+    pub thinking_type: String,
+    pub budget_tokens: usize,
 }
 
 impl Request {
     pub fn new(model: Model, messages: Vec<ChatMessage>) -> Self {
         Self {
-            intent: true,
-            n: 1,
-            stream: model.uses_streaming(),
             temperature: 0.1,
+            top_p: 1,
+            max_tokens: 8192,
+            n: 1,
+            stream: true,
             model,
             messages,
+            thinking: Some(ThinkingConfig {
+                thinking_type: "enabled".to_string(),
+                budget_tokens: 2000,
+            }),
         }
     }
 }

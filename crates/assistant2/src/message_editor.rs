@@ -306,7 +306,7 @@ impl Render for MessageEditor {
             Color::Default
         };
 
-        let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+        let vim_mode_enabled = false;
         let platform = PlatformStyle::platform();
         let linux = platform == PlatformStyle::Linux;
         let windows = platform == PlatformStyle::Windows;
