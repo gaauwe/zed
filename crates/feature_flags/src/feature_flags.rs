@@ -23,7 +23,6 @@ impl FeatureFlags {
             return true;
         }
 
-        #[cfg(debug_assertions)]
         if T::enabled_in_development() {
             return true;
         }
@@ -144,7 +143,7 @@ where
         if self
             .try_global::<FeatureFlags>()
             .is_some_and(|f| f.has_flag::<T>())
-            || cfg!(debug_assertions) && T::enabled_in_development()
+            || T::enabled_in_development()
         {
             self.defer_in(window, move |view, window, cx| {
                 callback(view, window, cx);
