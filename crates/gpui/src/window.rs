@@ -11,12 +11,12 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    Rgba, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString,
-    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTabController,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -207,8 +207,20 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    /// 8MB wasn't quite enough...
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(1024 * 1024));
+}
+
+/// Returned when the element arena has been used and so must be cleared before the next draw.
+#[must_use]
+pub struct ArenaClearNeeded;
+
+impl ArenaClearNeeded {
+    /// Clear the element arena.
+    pub fn clear(self) {
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            element_arena.clear();
+        });
+    }
 }
 
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
@@ -888,7 +900,6 @@ impl Window {
             window_min_size,
             window_decorations,
             allows_automatic_window_tabbing,
-            use_toolbar,
         } = options;
 
         let bounds = window_bounds
@@ -906,7 +917,6 @@ impl Window {
                 display_id,
                 window_min_size,
                 allows_automatic_window_tabbing,
-                use_toolbar,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
@@ -938,19 +948,13 @@ impl Window {
         }
 
         platform_window.on_close(Box::new({
-            let windows = cx.windows();
+            let window_id = handle.window_id();
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
-
-                windows
-                    .into_iter()
-                    .filter(|w| w.window_id() != handle.window_id())
-                    .for_each(|window| {
-                        let _ = window.update(&mut cx, |_, window, _| {
-                            window.refresh_has_system_window_tabs();
-                        });
-                    });
+                let _ = cx.update(|cx| {
+                    SystemWindowTabController::remove_window(cx, window_id);
+                });
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -983,8 +987,10 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
-                                window.draw(cx);
+                                let arena_clear_needed = window.draw(cx);
                                 window.present();
+                                // drop the arena elements after present to reduce latency
+                                arena_clear_needed.clear();
                             })
                             .log_err();
                     })
@@ -1037,6 +1043,18 @@ impl Window {
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
+
+                        let tab_group = window.tab_group();
+                        if let Some(tab_group) = tab_group {
+                            SystemWindowTabController::add_window(
+                                cx,
+                                tab_group,
+                                handle,
+                                SharedString::from(window.window_title()),
+                            );
+                        }
+
+                        window.bounds_changed(cx);
                         window.refresh();
                     })
                     .log_err();
@@ -1078,12 +1096,61 @@ impl Window {
                     .unwrap_or(None)
             })
         });
+        platform_window.on_select_next_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let window_id = handle.window_id();
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
+                        }
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_previous_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let window_id = handle.window_id();
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::select_previous_tab(
+                                cx, tab_group, window_id,
+                            );
+                        }
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_merge_all_windows({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::merge_all_windows(cx, tab_group);
+                        }
+                    })
+                    .log_err();
+            })
+        });
 
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
         }
 
         platform_window.map_window().unwrap();
+        let tab_group = platform_window.tab_group();
+        if let Some(tab_group) = tab_group {
+            SystemWindowTabController::add_window(
+                cx,
+                tab_group,
+                handle,
+                SharedString::from(platform_window.get_title()),
+            );
+        }
 
         Ok(Window {
             handle,
@@ -1368,6 +1435,31 @@ impl Window {
                 cx,
             )
         });
+    }
+
+    pub(crate) fn dispatch_keystroke_interceptors(
+        &mut self,
+        event: &dyn Any,
+        context_stack: Vec<KeyContext>,
+        cx: &mut App,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
+
+        cx.keystroke_interceptors
+            .clone()
+            .retain(&(), move |callback| {
+                (callback)(
+                    &KeystrokeEvent {
+                        keystroke: key_down_event.keystroke.clone(),
+                        action: None,
+                        context_stack: context_stack.clone(),
+                    },
+                    self,
+                    cx,
+                )
+            });
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1745,7 +1837,7 @@ impl Window {
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
-    pub fn draw(&mut self, cx: &mut App) {
+    pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -1769,13 +1861,6 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
-            }
-            element_arena.clear();
-        });
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -1817,6 +1902,8 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+
+        ArenaClearNeeded
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2639,7 +2726,7 @@ impl Window {
         path.color = color.opacity(opacity);
         self.next_frame
             .scene
-            .insert_primitive(path.scale(scale_factor));
+            .insert_primitive(path.apply_scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -3482,7 +3569,7 @@ impl Window {
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
-            self.draw(cx);
+            self.draw(cx).clear();
         }
 
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
@@ -3527,6 +3614,13 @@ impl Window {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
         };
+
+        cx.propagate_event = true;
+        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        if !cx.propagate_event {
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            return;
+        }
 
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
@@ -3576,7 +3670,6 @@ impl Window {
             return;
         }
 
-        cx.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
@@ -4113,41 +4206,16 @@ impl Window {
         self.platform_window.titlebar_double_click();
     }
 
-    /// Sets the window appearance.
+    /// Gets the window's title at the platform level.
     /// This is macOS specific.
-    pub fn set_appearance(&self, appearance: WindowAppearance) {
-        self.platform_window.set_appearance(appearance);
+    pub fn window_title(&self) -> String {
+        self.platform_window.get_title()
     }
 
-    /// Set the background color of the titlebar.
+    /// Returns the tab group pointer of the window.
     /// This is macOS specific.
-    pub fn set_fullscreen_titlebar_background_color(&self, color: Rgba) {
-        self.platform_window
-            .set_fullscreen_titlebar_background_color(color);
-    }
-
-    /// Returns whether the window has more then 1 tab (therefore showing the tab bar).
-    /// This is macOS specific.
-    pub fn has_system_window_tabs(&self) -> bool {
-        self.platform_window.has_system_window_tabs()
-    }
-
-    /// Syncs the window's tab state.
-    /// This is macOS specific.
-    pub fn refresh_has_system_window_tabs(&self) {
-        self.platform_window.refresh_has_system_window_tabs();
-    }
-
-    /// Selects the next tab in the tab group in the trailing direction.
-    /// This is macOS specific.
-    pub fn show_next_window_tab(&self) {
-        self.platform_window.show_next_window_tab()
-    }
-
-    /// Selects the previous tab in the tab group in the leading direction.
-    /// This is macOS specific.
-    pub fn show_previous_window_tab(&self) {
-        self.platform_window.show_previous_window_tab()
+    pub fn tab_group(&self) -> Option<usize> {
+        self.platform_window.tab_group()
     }
 
     /// Merges all open windows into a single tabbed window.
@@ -4160,6 +4228,12 @@ impl Window {
     /// This is macOS specific.
     pub fn move_window_tab_to_new_window(&self) {
         self.platform_window.move_window_tab_to_new_window()
+    }
+
+    /// Shows or hides the window tab overview.
+    /// This is macOS specific.
+    pub fn toggle_window_tab_overview(&self) {
+        self.platform_window.toggle_window_tab_overview()
     }
 
     /// Toggles the inspector mode on this window.

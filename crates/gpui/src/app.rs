@@ -226,24 +226,6 @@ impl Application {
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.0.borrow().path_for_auxiliary_executable(name)
     }
-
-    /// Creates a new window to show as a tab in a tabbed window.
-    /// On macOS, the system automatically calls this method to create a window for a new tab when the user clicks the plus button in a tabbed window.
-    pub fn new_window_for_tab<F>(&self, mut callback: F) -> &Self
-    where
-        F: 'static + FnMut(&mut App),
-    {
-        let this = Rc::downgrade(&self.0);
-        self.0
-            .borrow_mut()
-            .platform
-            .new_window_for_tab(Box::new(move || {
-                if let Some(app) = this.upgrade() {
-                    callback(&mut app.borrow_mut());
-                }
-            }));
-        self
-    }
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
@@ -254,6 +236,165 @@ type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'st
 type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct SystemWindowTab {
+    pub id: WindowId,
+    pub title: SharedString,
+    pub handle: AnyWindowHandle,
+}
+
+impl SystemWindowTab {
+    /// Create a new instance of the window tab.
+    pub fn new(id: WindowId, title: SharedString, handle: AnyWindowHandle) -> Self {
+        Self { id, title, handle }
+    }
+}
+
+/// A controller for managing window tabs.
+#[derive(Default)]
+pub struct SystemWindowTabController {
+    tabs: FxHashMap<usize, Vec<SystemWindowTab>>,
+}
+
+impl Global for SystemWindowTabController {}
+
+impl SystemWindowTabController {
+    /// Create a new instance of the window tab controller.
+    pub fn new() -> Self {
+        Self {
+            tabs: FxHashMap::default(),
+        }
+    }
+
+    /// Initialize the global window tab controller.
+    pub fn init(cx: &mut App) {
+        cx.set_global(SystemWindowTabController::new());
+    }
+
+    /// Get all tabs.
+    pub fn tabs(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
+        &self.tabs
+    }
+
+    /// Get all windows in a tab.
+    pub fn windows(&self, tab_group: usize) -> Option<&Vec<SystemWindowTab>> {
+        self.tabs.get(&tab_group)
+    }
+
+    /// Add a window to a tab group.
+    pub fn add_window(
+        cx: &mut App,
+        tab_group: usize,
+        handle: AnyWindowHandle,
+        title: SharedString,
+    ) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let id = handle.window_id();
+
+        for (existing_group, windows) in controller.tabs.iter_mut() {
+            if *existing_group != tab_group {
+                if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
+                    windows.remove(pos);
+                }
+            }
+        }
+
+        controller.tabs.retain(|_, windows| !windows.is_empty());
+        let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
+        if !windows.iter().any(|tab| tab.id == id) {
+            windows.push(SystemWindowTab::new(id, title, handle));
+        }
+    }
+
+    /// Remove a window from a tab group.
+    pub fn remove_window(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.tabs.retain(|_, windows| {
+            if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
+                windows.remove(pos);
+            }
+            !windows.is_empty()
+        });
+    }
+
+    /// Move window to a new position within the same tab group.
+    pub fn update_window_position(cx: &mut App, id: WindowId, ix: usize) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for (_, windows) in controller.tabs.iter_mut() {
+            if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
+                if ix < windows.len() && current_pos != ix {
+                    let window_tab = windows.remove(current_pos);
+                    windows.insert(ix, window_tab);
+                }
+                break;
+            }
+        }
+    }
+
+    /// Update the title of a window.
+    pub fn update_window_title(cx: &mut App, id: WindowId, title: SharedString) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for windows in controller.tabs.values_mut() {
+            for tab in windows.iter_mut() {
+                if tab.id == id {
+                    tab.title = title.clone();
+                }
+            }
+        }
+    }
+
+    /// Merge all windows to a single tab group.
+    pub fn merge_all_windows(cx: &mut App, tab_group: usize) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let mut all_windows = Vec::new();
+        for windows in controller.tabs.values() {
+            all_windows.extend(windows.iter().cloned());
+        }
+
+        controller.tabs.clear();
+        if !all_windows.is_empty() {
+            controller.tabs.insert(tab_group, all_windows);
+        }
+    }
+
+    /// Selects the next tab in the tab group in the trailing direction.
+    pub fn select_next_tab(cx: &mut App, tab_group: usize, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let windows = controller.tabs.get_mut(&tab_group).unwrap();
+        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        let next_index = (current_index + 1) % windows.len();
+
+        let _ = &windows[next_index].handle.update(cx, |_, window, _| {
+            window.activate_window();
+        });
+    }
+
+    /// Selects the previous tab in the tab group in the leading direction.
+    pub fn select_previous_tab(cx: &mut App, tab_group: usize, id: WindowId) {
+        log::info!("select_previous_tab");
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let windows = controller.tabs.get_mut(&tab_group).unwrap();
+        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        log::info!("current_index: {}", current_index);
+        let previous_index = if current_index == 0 {
+            windows.len() - 1
+        } else {
+            current_index - 1
+        };
+        log::info!("previous_index: {}", previous_index);
+
+        let result = &windows[previous_index].handle.update(cx, |_, window, _| {
+            log::info!("activate_window");
+            window.activate_window();
+        });
+
+        if let Err(err) = result {
+            log::info!("Error activating window: {}", err);
+        }
+    }
+}
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
@@ -290,6 +431,7 @@ pub struct App {
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
+    pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
@@ -362,6 +504,7 @@ impl App {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
+                keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
@@ -381,6 +524,7 @@ impl App {
         });
 
         init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+        SystemWindowTabController::init(&mut app.borrow_mut());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
@@ -927,7 +1071,7 @@ impl App {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, window, cx| window.draw(cx))
+                    self.update_window(window, |_, window, cx| window.draw(cx).clear())
                         .unwrap();
                 }
 
@@ -1340,6 +1484,32 @@ impl App {
         )
     }
 
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires _before_ all other action and event mechanisms have resolved
+    /// unlike [`App::observe_keystrokes`] which fires after. This means that `cx.stop_propagation` calls
+    /// within interceptors will prevent action dispatch
+    pub fn intercept_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        fn inner(
+            keystroke_interceptors: &SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_interceptors.insert((), handler);
+            activate();
+            subscription
+        }
+
+        inner(
+            &mut self.keystroke_interceptors,
+            Box::new(move |event, window, cx| {
+                f(event, window, cx);
+                true
+            }),
+        )
+    }
+
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
@@ -1350,6 +1520,11 @@ impl App {
     pub fn clear_key_bindings(&mut self) {
         self.keymap.borrow_mut().clear();
         self.pending_effects.push_back(Effect::RefreshWindows);
+    }
+
+    /// Get all key bindings in the app.
+    pub fn key_bindings(&self) -> Rc<RefCell<Keymap>> {
+        self.keymap.clone()
     }
 
     /// Register a global listener for actions invoked via the keyboard.
@@ -1392,7 +1567,7 @@ impl App {
 
     /// Get all action names that have been registered. Note that registration only allows for
     /// actions to be built dynamically, and is unrelated to binding actions in the element tree.
-    pub fn all_action_names(&self) -> &[SharedString] {
+    pub fn all_action_names(&self) -> &[&'static str] {
         self.actions.all_action_names()
     }
 
@@ -1406,14 +1581,24 @@ impl App {
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Vec<(&'static str, Option<schemars::Schema>)> {
         self.actions.action_schemas(generator)
     }
 
-    /// Get a list of all deprecated action aliases and their canonical names.
-    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
-        self.actions.action_deprecations()
+    /// Get a map from a deprecated action name to the canonical name.
+    pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecated_aliases()
+    }
+
+    /// Get a map from an action name to the deprecation messages.
+    pub fn action_deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecation_messages()
+    }
+
+    /// Get a map from an action name to the documentation.
+    pub fn action_documentation(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.documentation()
     }
 
     /// Register a callback to be invoked when the application is about to quit.

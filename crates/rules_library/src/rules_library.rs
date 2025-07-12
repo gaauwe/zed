@@ -1,10 +1,10 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use editor::CompletionProvider;
+use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
-    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, size,
+    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
     transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
@@ -37,7 +37,16 @@ pub fn init(cx: &mut App) {
 
 actions!(
     rules_library,
-    [NewRule, DeleteRule, DuplicateRule, ToggleDefaultRule]
+    [
+        /// Creates a new rule in the rules library.
+        NewRule,
+        /// Deletes the selected rule.
+        DeleteRule,
+        /// Duplicates the selected rule.
+        DuplicateRule,
+        /// Toggles whether the selected rule is a default rule.
+        ToggleDefaultRule
+    ]
 );
 
 const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
@@ -121,7 +130,7 @@ pub fn open_rules_library(
                     titlebar: Some(TitlebarOptions {
                         title: Some("Rules Library".into()),
                         appears_transparent: true,
-                        traffic_light_position: Default::default(),
+                        traffic_light_position: Some(point(px(9.0), px(9.0))),
                     }),
                     app_id: Some(app_id.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -405,7 +414,7 @@ impl RulesLibrary {
         });
         Self {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", window, cx)))
             } else {
                 None
             },
@@ -895,10 +904,15 @@ impl RulesLibrary {
             }
             EditorEvent::Blurred => {
                 title_editor.update(cx, |title_editor, cx| {
-                    title_editor.change_selections(None, window, cx, |selections| {
-                        let cursor = selections.oldest_anchor().head();
-                        selections.select_anchor_ranges([cursor..cursor]);
-                    });
+                    title_editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = selections.oldest_anchor().head();
+                            selections.select_anchor_ranges([cursor..cursor]);
+                        },
+                    );
                 });
             }
             _ => {}
@@ -920,10 +934,15 @@ impl RulesLibrary {
             }
             EditorEvent::Blurred => {
                 body_editor.update(cx, |body_editor, cx| {
-                    body_editor.change_selections(None, window, cx, |selections| {
-                        let cursor = selections.oldest_anchor().head();
-                        selections.select_anchor_ranges([cursor..cursor]);
-                    });
+                    body_editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = selections.oldest_anchor().head();
+                            selections.select_anchor_ranges([cursor..cursor]);
+                        },
+                    );
                 });
             }
             _ => {}
@@ -962,6 +981,7 @@ impl RulesLibrary {
                                     tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
+                                    thinking_allowed: true,
                                 },
                                 cx,
                             )
