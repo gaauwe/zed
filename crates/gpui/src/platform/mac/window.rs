@@ -465,6 +465,12 @@ impl MacWindowState {
     }
 
     fn start_display_link(&mut self) {
+        let now = std::time::SystemTime::now();
+        let millis = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        log::info!("Start display link: {}", millis);
         self.stop_display_link();
         unsafe {
             if !self
@@ -1362,6 +1368,35 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool)>> {
+        unsafe {
+            let tabbed_windows: id = msg_send![self.0.lock().native_window, tabbedWindows];
+            if tabbed_windows.is_null() {
+                return None;
+            }
+
+            let count: NSUInteger = msg_send![tabbed_windows, count];
+            let mut windows = Vec::new();
+            for i in 0..count {
+                let window: id = msg_send![tabbed_windows, objectAtIndex: i];
+                let title: id = msg_send![window, title];
+                let title_str = if title.is_null() {
+                    "".to_string()
+                } else {
+                    title.to_str().to_string()
+                };
+                let is_active: BOOL = msg_send![window, isKeyWindow];
+                windows.push((
+                    window as *const Object as usize,
+                    title_str,
+                    is_active == YES,
+                ));
+            }
+
+            Some(windows)
+        }
+    }
+
     fn get_tab_bar_visible(&self) -> bool {
         unsafe {
             let tab_group: id = msg_send![self.0.lock().native_window, tabGroup];
@@ -1820,8 +1855,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.as_ref().lock();
+
     unsafe {
+        let tabgroup: id = msg_send![lock.native_window, tabGroup];
+
         if lock
             .native_window
             .occlusionState()

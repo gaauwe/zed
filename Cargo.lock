@@ -16402,6 +16402,7 @@ dependencies = [
  "db",
  "gpui",
  "http_client",
+ "log",
  "notifications",
  "pretty_assertions",
  "project",

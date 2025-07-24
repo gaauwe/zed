@@ -4203,6 +4203,12 @@ impl Window {
         self.platform_window.tab_group()
     }
 
+    /// Returns a list of all tabbed windows and their titles.
+    /// This is macOS specific.
+    pub fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool)>> {
+        self.platform_window.tabbed_windows()
+    }
+
     /// Merges all open windows into a single tabbed window.
     /// This is macOS specific.
     pub fn merge_all_windows(&self) {

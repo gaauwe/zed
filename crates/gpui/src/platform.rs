@@ -498,6 +498,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn tab_group(&self) -> Option<usize> {
         None
     }
+    fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool)>> {
+        None
+    }
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
