@@ -4,8 +4,9 @@ use settings::Settings;
 use std::any::TypeId;
 
 use gpui::{
-    Context, Hsla, InteractiveElement, ParentElement, ScrollHandle, Styled, Subscription,
-    SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    AnyWindowHandle, Context, Hsla, InteractiveElement, ParentElement, ScrollHandle, Styled,
+    Subscription, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas,
+    div, rgb,
 };
 use ui::{
     Color, ContextMenu, DynamicSpacing, IconButton, IconButtonShape, IconName, IconSize, Label,
@@ -140,6 +141,7 @@ impl SystemWindowTabs {
         &self,
         ix: usize,
         title: String,
+        handle: AnyWindowHandle,
         is_active: bool,
         active_background_color: Hsla,
         inactive_background_color: Hsla,
@@ -151,10 +153,6 @@ impl SystemWindowTabs {
         let show_close_button = &settings.show_close_button;
 
         let rem_size = window.rem_size();
-        let width = self.measured_tab_width.max(rem_size * 10);
-        // let is_active = window.window_handle().window_id() == item.id;
-        // let title = item.title.to_string();
-        // let is_active = false;
 
         let label = Label::new(&title)
             .size(LabelSize::Small)
@@ -166,84 +164,50 @@ impl SystemWindowTabs {
             });
 
         let tab = h_flex()
-            .h_full()
-            .w(width)
-            .border_t_1()
-            .border_color(if is_active {
-                active_background_color
-            } else {
-                cx.theme().colors().border
+            .id(ix)
+            .group("tab")
+            .w_full()
+            .overflow_hidden()
+            .h(Tab::content_height(cx))
+            .relative()
+            .px(DynamicSpacing::Base16.px(cx))
+            .justify_center()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                let _ = handle.update(cx, |_, window, _| {
+                    window.activate_window();
+                });
             })
-            .child(
-                h_flex()
-                    .id(ix)
-                    .group("tab")
-                    .w_full()
-                    .h(Tab::content_height(cx))
-                    .relative()
-                    .px(DynamicSpacing::Base16.px(cx))
-                    .justify_center()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border)
-                    .when(is_active, |this| this.bg(active_background_color))
-                    .cursor_pointer()
-                    // .on_drag(
-                    //     DraggedWindowTab {
-                    //         id: item.id,
-                    //         title: item.title.to_string(),
-                    //         width,
-                    //         is_active,
-                    //         active_background_color,
-                    //         inactive_background_color,
-                    //     },
-                    //     |tab, _, _, cx| cx.new(|_| tab.clone()),
-                    // )
-                    // .drag_over::<DraggedWindowTab>(|element, _, _, cx| {
-                    //     element.bg(cx.theme().colors().drop_target_background)
-                    // })
-                    // .on_drop(cx.listener(
-                    //     move |_this, dragged_tab: &DraggedWindowTab, _window, cx| {
-                    //         Self::handle_tab_drop(dragged_tab, ix, cx);
-                    //     },
-                    // ))
-                    .on_click(move |_, _, cx| {
-                        // let _ = item.handle.update(cx, |_, window, _| {
-                        //     window.activate_window();
-                        // });
-                        let windows = cx.windows();
-                        windows[ix].update(cx, |_, window, _| {
-                            window.activate_window();
-                        });
-                    })
-                    .child(label)
-                    .map(|this| match show_close_button {
-                        ShowCloseButton::Hidden => this,
-                        _ => this.child(
-                            div()
-                                .absolute()
-                                .top_2()
-                                .w_4()
-                                .h_4()
-                                .map(|this| match close_side {
-                                    ClosePosition::Left => this.left_1(),
-                                    ClosePosition::Right => this.right_1(),
+            .child(label)
+            .map(|this| match show_close_button {
+                ShowCloseButton::Hidden => this,
+                _ => this.child(
+                    div()
+                        .absolute()
+                        .top_2()
+                        .w_4()
+                        .h_4()
+                        .map(|this| match close_side {
+                            ClosePosition::Left => this.left_1(),
+                            ClosePosition::Right => this.right_1(),
+                        })
+                        .child(
+                            IconButton::new("close", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(CloseWindow), cx);
                                 })
-                                .child(
-                                    IconButton::new("close", IconName::Close)
-                                        .shape(IconButtonShape::Square)
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::XSmall)
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(Box::new(CloseWindow), cx);
-                                        })
-                                        .map(|this| match show_close_button {
-                                            ShowCloseButton::Hover => this.visible_on_hover("tab"),
-                                            _ => this,
-                                        }),
-                                ),
+                                .map(|this| match show_close_button {
+                                    ShowCloseButton::Hover => this.visible_on_hover("tab"),
+                                    _ => this,
+                                }),
                         ),
-                    }),
-            )
+                ),
+            })
             .into_any();
 
         // let tabs = self.tabs.clone();
@@ -309,7 +273,17 @@ impl SystemWindowTabs {
                 })
             });
 
-        div().child(menu).size_full()
+        div()
+            .flex_1()
+            .min_w(rem_size * 10)
+            .when(is_active, |this| this.bg(active_background_color))
+            .border_t_1()
+            .border_color(if is_active {
+                active_background_color
+            } else {
+                cx.theme().colors().border
+            })
+            .child(menu)
     }
 
     fn handle_tab_drop(dragged_tab: &DraggedWindowTab, ix: usize, cx: &mut Context<Self>) {
@@ -345,22 +319,24 @@ impl Render for SystemWindowTabs {
         let active_background_color = cx.theme().colors().title_bar_background;
         let inactive_background_color = cx.theme().colors().tab_bar_background;
 
-        let windows = window.tabbed_windows();
-        dbg!(&windows);
-        let Some(windows) = window.tabbed_windows() else {
-            return h_flex().into_any_element();
-        };
+        let windows = window.tabbed_windows().unwrap_or_default();
+        // Find the index of the active window
+        let active_window_handle = windows
+            .iter()
+            .find(|item| item.2)
+            .map(|item| item.3.clone())
+            .unwrap_or(window.window_handle());
 
         let entity = cx.entity();
-        let number_of_tabs = windows.len().max(1);
-        let tab_items = windows
+        let mut tab_items = windows
             .iter()
             .enumerate()
             .map(|(ix, item)| {
                 self.render_tab(
                     ix,
                     item.1.clone(),
-                    item.2,
+                    item.3,
+                    active_window_handle.window_id() == item.3.window_id(),
                     active_background_color,
                     inactive_background_color,
                     window,
@@ -369,7 +345,29 @@ impl Render for SystemWindowTabs {
             })
             .collect::<Vec<_>>();
 
-        if !window.tab_bar_visible() {
+        if tab_items.is_empty() {
+            tab_items.push(self.render_tab(
+                0,
+                window.window_title(),
+                window.window_handle(),
+                true,
+                active_background_color,
+                inactive_background_color,
+                window,
+                cx,
+            ))
+        }
+
+        let number_of_tabs = tab_items.len().max(1);
+
+        dbg!(
+            window.window_handle().window_id(),
+            window.window_title(),
+            number_of_tabs,
+            window.tab_bar_visible()
+        );
+
+        if number_of_tabs <= 1 {
             return h_flex().into_any_element();
         }
 
@@ -381,11 +379,9 @@ impl Render for SystemWindowTabs {
                 h_flex()
                     .id("window tabs")
                     .w_full()
-                    .h_full()
                     .h(Tab::container_height(cx))
                     .bg(inactive_background_color)
                     .overflow_x_scroll()
-                    .w_full()
                     .track_scroll(&self.tab_bar_scroll_handle)
                     .children(tab_items)
                     .child(

@@ -370,10 +370,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             toggle_tab_bar as extern "C" fn(&Object, Sel, id),
         );
 
-        decl.add_method(
-            sel!(observeValueForKeyPath:ofObject:change:context:),
-            observe_value_for_key_path as extern "C" fn(&Object, Sel, id, id, id, *mut c_void),
-        );
+        // decl.add_method(
+        //     sel!(observeValueForKeyPath:ofObject:change:context:),
+        //     observe_value_for_key_path as extern "C" fn(&Object, Sel, id, id, id, *mut c_void),
+        // );
 
         decl.register()
     }
@@ -797,7 +797,7 @@ impl MacWindow {
                 }
             }
 
-            init_tab_group_observer(native_window);
+            // init_tab_group_observer(native_window);
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
             if allows_automatic_window_tabbing
@@ -920,7 +920,7 @@ impl Drop for MacWindow {
         let window = this.native_window;
         this.display_link.take();
         unsafe {
-            remove_tab_group_kvo_observer(window);
+            // remove_tab_group_kvo_observer(window);
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
@@ -969,15 +969,43 @@ impl PlatformWindow for MacWindow {
 
     fn merge_all_windows(&self) {
         let native_window = self.0.lock().native_window;
-        unsafe {
+
+        // Defer the native window operation to avoid reentrancy issues
+        // Similar to how Platform::quit is handled
+        use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
+
+        unsafe extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
+            let native_window = context as id;
             let _: () = msg_send![native_window, mergeAllWindows:nil];
+        }
+
+        unsafe {
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                native_window as *mut std::ffi::c_void,
+                Some(merge_windows_async),
+            );
         }
     }
 
     fn move_tab_to_new_window(&self) {
         let native_window = self.0.lock().native_window;
-        unsafe {
+
+        // Defer the native window operation to avoid reentrancy issues
+        use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
+
+        unsafe extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
+            let native_window = context as id;
             let _: () = msg_send![native_window, moveTabToNewWindow:nil];
+            let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+        }
+
+        unsafe {
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                native_window as *mut std::ffi::c_void,
+                Some(move_tab_async),
+            );
         }
     }
 
@@ -1368,32 +1396,37 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool)>> {
+    fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool, AnyWindowHandle)>> {
         unsafe {
-            let tabbed_windows: id = msg_send![self.0.lock().native_window, tabbedWindows];
-            if tabbed_windows.is_null() {
+            let windows: id = msg_send![self.0.lock().native_window, tabbedWindows];
+            if windows.is_null() {
                 return None;
             }
 
-            let count: NSUInteger = msg_send![tabbed_windows, count];
-            let mut windows = Vec::new();
+            let count: NSUInteger = msg_send![windows, count];
+            let mut result = Vec::new();
             for i in 0..count {
-                let window: id = msg_send![tabbed_windows, objectAtIndex: i];
-                let title: id = msg_send![window, title];
-                let title_str = if title.is_null() {
-                    "".to_string()
-                } else {
-                    title.to_str().to_string()
-                };
-                let is_active: BOOL = msg_send![window, isKeyWindow];
-                windows.push((
-                    window as *const Object as usize,
-                    title_str,
-                    is_active == YES,
-                ));
+                let window: id = msg_send![windows, objectAtIndex:i];
+                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                    let handle = get_window_state(&*window).lock().handle;
+                    let title: id = msg_send![window, title];
+                    let title_str = if title.is_null() {
+                        "".to_string()
+                    } else {
+                        title.to_str().to_string()
+                    };
+                    let is_active: bool = msg_send![window, isKeyWindow];
+
+                    result.push((
+                        window as *const Object as usize,
+                        title_str,
+                        is_active == YES,
+                        handle,
+                    ));
+                }
             }
 
-            Some(windows)
+            Some(result)
         }
     }
 
@@ -1856,9 +1889,8 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-
     unsafe {
-        let tabgroup: id = msg_send![lock.native_window, tabGroup];
+        let tab_group: id = msg_send![lock.native_window, tabGroup];
 
         if lock
             .native_window
@@ -1866,7 +1898,8 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
         {
             lock.start_display_link();
-        } else {
+        } else if tab_group.is_null() {
+            // } else {
             lock.stop_display_link();
         }
     }
@@ -2533,48 +2566,48 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
     }
 }
 
-unsafe fn init_tab_group_observer(this: *mut Object) {
-    unsafe {
-        let _: () = msg_send![this,
-            addObserver:this
-            forKeyPath:ns_string("tabGroup")
-            options:1u64 // NSKeyValueObservingOptionNew
-            context:std::ptr::null_mut::<c_void>()];
-    }
-}
+// unsafe fn init_tab_group_observer(this: *mut Object) {
+//     unsafe {
+//         let _: () = msg_send![this,
+//             addObserver:this
+//             forKeyPath:ns_string("tabGroup")
+//             options:1u64 // NSKeyValueObservingOptionNew
+//             context:std::ptr::null_mut::<c_void>()];
+//     }
+// }
 
-unsafe fn remove_tab_group_kvo_observer(this: *mut Object) {
-    unsafe {
-        let _: () = msg_send![this,
-            removeObserver:this
-            forKeyPath:ns_string("tabGroup")
-            context:std::ptr::null_mut::<c_void>()];
-    }
-}
+// unsafe fn remove_tab_group_kvo_observer(this: *mut Object) {
+//     unsafe {
+//         let _: () = msg_send![this,
+//             removeObserver:this
+//             forKeyPath:ns_string("tabGroup")
+//             context:std::ptr::null_mut::<c_void>()];
+//     }
+// }
 
-extern "C" fn observe_value_for_key_path(
-    this: &Object,
-    _sel: Sel,
-    key_path: id,
-    _object: id,
-    change: id,
-    _context: *mut c_void,
-) {
-    unsafe {
-        if key_path.isEqualToString("tabGroup") {
-            let tabgroup_id: id = msg_send![change, objectForKey: ns_string("new")];
-            let window_state = get_window_state(this);
-            let queue: id = msg_send![class!(NSOperationQueue), mainQueue];
-            let block = ConcreteBlock::new(move || {
-                let mut lock = window_state.as_ref().lock();
-                if let Some(mut callback) = lock.tab_group_changed_callback.take() {
-                    drop(lock);
-                    callback(tabgroup_id as usize);
-                    window_state.lock().tab_group_changed_callback = Some(callback);
-                }
-            })
-            .copy();
-            let _: () = msg_send![queue, addOperationWithBlock: &*block];
-        }
-    }
-}
+// extern "C" fn observe_value_for_key_path(
+//     this: &Object,
+//     _sel: Sel,
+//     key_path: id,
+//     _object: id,
+//     change: id,
+//     _context: *mut c_void,
+// ) {
+//     unsafe {
+//         if key_path.isEqualToString("tabGroup") {
+//             let tabgroup_id: id = msg_send![change, objectForKey: ns_string("new")];
+//             let window_state = get_window_state(this);
+//             let queue: id = msg_send![class!(NSOperationQueue), mainQueue];
+//             let block = ConcreteBlock::new(move || {
+//                 let mut lock = window_state.as_ref().lock();
+//                 if let Some(mut callback) = lock.tab_group_changed_callback.take() {
+//                     drop(lock);
+//                     callback(tabgroup_id as usize);
+//                     window_state.lock().tab_group_changed_callback = Some(callback);
+//                 }
+//             })
+//             .copy();
+//             let _: () = msg_send![queue, addOperationWithBlock: &*block];
+//         }
+//     }
+// }

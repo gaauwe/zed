@@ -498,7 +498,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn tab_group(&self) -> Option<usize> {
         None
     }
-    fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool)>> {
+    fn tabbed_windows(&self) -> Option<Vec<(usize, String, bool, AnyWindowHandle)>> {
         None
     }
 

@@ -289,99 +289,99 @@ impl SystemWindowTabController {
 
     /// Insert a window into a tab group.
     pub fn insert_window(cx: &mut App, window: &Window, tab_group: usize) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // let mut controller = cx.global_mut::<SystemWindowTabController>();
 
-        let title = SharedString::from(window.window_title());
-        let handle = window.window_handle();
+        // let title = SharedString::from(window.window_title());
+        // let handle = window.window_handle();
 
-        for windows in controller.tabs.values_mut() {
-            if let Some(pos) = windows.iter().position(|tab| tab.id == handle.id) {
-                windows.remove(pos);
-            }
-        }
+        // for windows in controller.tabs.values_mut() {
+        //     if let Some(pos) = windows.iter().position(|tab| tab.id == handle.id) {
+        //         windows.remove(pos);
+        //     }
+        // }
 
-        controller.tabs.retain(|_, windows| !windows.is_empty());
+        // controller.tabs.retain(|_, windows| !windows.is_empty());
 
-        let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
-        if !windows.iter().any(|tab| tab.id == handle.id) {
-            windows.push(SystemWindowTab::new(title, handle));
-        }
+        // let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
+        // if !windows.iter().any(|tab| tab.id == handle.id) {
+        //     windows.push(SystemWindowTab::new(title, handle));
+        // }
     }
 
     /// Remove a window from a tab group.
     pub fn remove_window(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        controller.tabs.retain(|_, windows| {
-            if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
-                windows.remove(pos);
-            }
-            !windows.is_empty()
-        });
+        // let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // controller.tabs.retain(|_, windows| {
+        //     if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
+        //         windows.remove(pos);
+        //     }
+        //     !windows.is_empty()
+        // });
     }
 
     /// Move window to a new position within the same tab group.
     pub fn update_window_position(cx: &mut App, id: WindowId, ix: usize) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        for (_, windows) in controller.tabs.iter_mut() {
-            if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
-                if ix < windows.len() && current_pos != ix {
-                    let window_tab = windows.remove(current_pos);
-                    windows.insert(ix, window_tab);
-                }
-                break;
-            }
-        }
+        // let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // for (_, windows) in controller.tabs.iter_mut() {
+        //     if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
+        //         if ix < windows.len() && current_pos != ix {
+        //             let window_tab = windows.remove(current_pos);
+        //             windows.insert(ix, window_tab);
+        //         }
+        //         break;
+        //     }
+        // }
     }
 
     /// Update the title of a window.
     pub fn update_window_title(cx: &mut App, id: WindowId, title: SharedString) {
-        let controller = cx.global::<SystemWindowTabController>();
-        let tab = controller
-            .tabs
-            .values()
-            .flat_map(|windows| windows.iter())
-            .find(|tab| tab.id == id);
+        // let controller = cx.global::<SystemWindowTabController>();
+        // let tab = controller
+        //     .tabs
+        //     .values()
+        //     .flat_map(|windows| windows.iter())
+        //     .find(|tab| tab.id == id);
 
-        if tab.map_or(true, |t| t.title == title) {
-            return;
-        }
+        // if tab.map_or(true, |t| t.title == title) {
+        //     return;
+        // }
 
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        for windows in controller.tabs.values_mut() {
-            for tab in windows.iter_mut() {
-                if tab.id == id {
-                    tab.title = title.clone();
-                }
-            }
-        }
+        // let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // for windows in controller.tabs.values_mut() {
+        //     for tab in windows.iter_mut() {
+        //         if tab.id == id {
+        //             tab.title = title.clone();
+        //         }
+        //     }
+        // }
     }
 
     /// Selects the next tab in the tab group in the trailing direction.
     pub fn select_next_tab(cx: &mut App, tab_group: usize, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let windows = controller.tabs.get_mut(&tab_group).unwrap();
-        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
-        let next_index = (current_index + 1) % windows.len();
+        // let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // let windows = controller.tabs.get_mut(&tab_group).unwrap();
+        // let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        // let next_index = (current_index + 1) % windows.len();
 
-        let _ = &windows[next_index].handle.update(cx, |_, window, _| {
-            window.activate_window();
-        });
+        // let _ = &windows[next_index].handle.update(cx, |_, window, _| {
+        //     window.activate_window();
+        // });
     }
 
     /// Selects the previous tab in the tab group in the leading direction.
     pub fn select_previous_tab(cx: &mut App, tab_group: usize, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let windows = controller.tabs.get_mut(&tab_group).unwrap();
-        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
-        let previous_index = if current_index == 0 {
-            windows.len() - 1
-        } else {
-            current_index - 1
-        };
+        // let mut controller = cx.global_mut::<SystemWindowTabController>();
+        // let windows = controller.tabs.get_mut(&tab_group).unwrap();
+        // let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        // let previous_index = if current_index == 0 {
+        //     windows.len() - 1
+        // } else {
+        //     current_index - 1
+        // };
 
-        let _ = &windows[previous_index].handle.update(cx, |_, window, _| {
-            window.activate_window();
-        });
+        // let _ = &windows[previous_index].handle.update(cx, |_, window, _| {
+        //     window.activate_window();
+        // });
     }
 }
 
