@@ -38,83 +38,31 @@ pub struct DraggedWindowTab {
 }
 
 pub struct SystemWindowTabs {
-    // tabs: Vec<SystemWindowTab>,
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl SystemWindowTabs {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let window_id = window.window_handle().window_id();
-        let mut subscriptions = Vec::new();
-
-        subscriptions.push(
-            cx.observe_global::<SystemWindowTabController>(move |this, cx| {
-                let controller = cx.global::<SystemWindowTabController>();
-                let tab_group = controller.tabs().iter().find_map(|(group, windows)| {
-                    windows
-                        .iter()
-                        .find(|tab| tab.id == window_id)
-                        .map(|_| *group)
-                });
-
-                if let Some(tab_group) = tab_group {
-                    let all_tab_groups = controller.tabs();
-                    let tabs = controller.windows(tab_group);
-                    let show_merge_all_windows = all_tab_groups.len() > 1;
-                    let show_other_tab_actions = if let Some(tabs) = tabs {
-                        // this.tabs = tabs.clone();
-                        tabs.len() > 1
-                    } else {
-                        false
-                    };
-
-                    let merge_all_windows_action = TypeId::of::<MergeAllWindows>();
-                    let other_tab_actions = vec![
-                        TypeId::of::<ShowNextWindowTab>(),
-                        TypeId::of::<ShowPreviousWindowTab>(),
-                        TypeId::of::<MoveTabToNewWindow>(),
-                    ];
-
-                    if show_merge_all_windows && show_other_tab_actions {
-                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                            let mut all_actions = vec![merge_all_windows_action];
-                            all_actions.extend(other_tab_actions.iter().cloned());
-                            filter.show_action_types(all_actions.iter());
-                        });
-                    } else if show_merge_all_windows {
-                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                            filter.show_action_types(std::iter::once(&merge_all_windows_action));
-                            filter.hide_action_types(&other_tab_actions);
-                        });
-                    } else if show_other_tab_actions {
-                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                            filter.show_action_types(other_tab_actions.iter());
-                            filter.hide_action_types(&[merge_all_windows_action]);
-                        });
-                    } else {
-                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                            let mut all_actions = vec![merge_all_windows_action];
-                            all_actions.extend(other_tab_actions.iter().cloned());
-                            filter.hide_action_types(&all_actions);
-                        });
-                    }
-                }
-            }),
-        );
-
+    pub fn new(window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
-            // tabs: Vec::new(),
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: window.bounds().size.width,
-            _subscriptions: subscriptions,
         }
     }
 
     pub fn init(cx: &mut App) {
         cx.observe_new(|workspace: &mut Workspace, _, _| {
             workspace
+                // .register_action_renderer(|div, workspace, _, cx| {
+                //     div.when(status == Some(ThreadStatus::Running), |div| {
+                //         let active_item = active_item.clone();
+                //         div.on_action(move |_: &Pause, _, cx| {
+                //             active_item
+                //                 .update(cx, |item, cx| item.pause_thread(cx))
+                //                 .ok();
+                //         })
+                //     })
+                // })
                 .register_action(|_, _: &ShowNextWindowTab, window, cx| {
                     let window_id = window.window_handle().window_id();
                     if let Some(tab_group) = window.tab_group() {
@@ -142,7 +90,6 @@ impl SystemWindowTabs {
         ix: usize,
         title: String,
         handle: AnyWindowHandle,
-        is_active: bool,
         active_background_color: Hsla,
         inactive_background_color: Hsla,
         window: &mut Window,
@@ -153,6 +100,7 @@ impl SystemWindowTabs {
         let show_close_button = &settings.show_close_button;
 
         let rem_size = window.rem_size();
+        let is_active = window.window_handle().window_id() == handle.window_id();
 
         let label = Label::new(&title)
             .size(LabelSize::Small)
@@ -318,55 +266,38 @@ impl Render for SystemWindowTabs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_background_color = cx.theme().colors().title_bar_background;
         let inactive_background_color = cx.theme().colors().tab_bar_background;
+        let entity = cx.entity();
 
         let windows = window.tabbed_windows().unwrap_or_default();
-        // Find the index of the active window
-        let active_window_handle = windows
-            .iter()
-            .find(|item| item.2)
-            .map(|item| item.3.clone())
-            .unwrap_or(window.window_handle());
-
-        let entity = cx.entity();
-        let mut tab_items = windows
-            .iter()
-            .enumerate()
-            .map(|(ix, item)| {
-                self.render_tab(
-                    ix,
-                    item.1.clone(),
-                    item.3,
-                    active_window_handle.window_id() == item.3.window_id(),
-                    active_background_color,
-                    inactive_background_color,
-                    window,
-                    cx,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        if tab_items.is_empty() {
-            tab_items.push(self.render_tab(
+        let tab_items = if windows.is_empty() {
+            vec![self.render_tab(
                 0,
                 window.window_title(),
                 window.window_handle(),
-                true,
                 active_background_color,
                 inactive_background_color,
                 window,
                 cx,
-            ))
-        }
+            )]
+        } else {
+            windows
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    self.render_tab(
+                        ix,
+                        item.1.clone(),
+                        item.3,
+                        active_background_color,
+                        inactive_background_color,
+                        window,
+                        cx,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
 
         let number_of_tabs = tab_items.len().max(1);
-
-        dbg!(
-            window.window_handle().window_id(),
-            window.window_title(),
-            number_of_tabs,
-            window.tab_bar_visible()
-        );
-
         if number_of_tabs <= 1 {
             return h_flex().into_any_element();
         }
