@@ -587,13 +587,7 @@ impl MacWindow {
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
-
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
-            if allows_automatic_window_tabbing {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
-            } else {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
-            }
 
             let mut style_mask;
             if let Some(titlebar) = titlebar.as_ref() {
@@ -781,6 +775,8 @@ impl MacWindow {
                     if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                    } else {
+                        let _: () = msg_send![native_window, setTabbingIdentifier: nil];
                     }
                 }
                 WindowKind::PopUp => {
