@@ -1,9 +1,4 @@
-use std::{
-    any::Any,
-    fmt::Debug,
-    ops::Not,
-    time::{Duration, Instant},
-};
+use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
 
 use gpui::{
     Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,
@@ -1276,8 +1271,8 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             if should_invert { 0.0 } else { DELTA_MAX }
                         } else {
                             window.with_element_state(id.unwrap(), |state, window| {
-                                let state = state.unwrap_or_else(|| Instant::now());
-                                let current = Instant::now();
+                                let current = cx.background_executor().now();
+                                let state = state.unwrap_or(current);
 
                                 let new_delta = DELTA_MAX.min(
                                     current_delta
